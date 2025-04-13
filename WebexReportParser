@@ -1,0 +1,91 @@
+function main(workbook: ExcelScript.Workbook) {
+  const sheet = workbook.getActiveWorksheet();
+
+  // Freeze header row
+  sheet.getFreezePanes().freezeRows(1);
+
+  // Get used range and headers
+  const usedRange = sheet.getUsedRange();
+  const headers = usedRange.getRow(0).getValues()[0] as string[];
+
+  const emailColumn = "Attendee Email";
+  const durationColumn = "Attendance Duration";
+
+  const emailIdx = headers.indexOf(emailColumn);
+  const durationIdx = headers.indexOf(durationColumn);
+
+  if (emailIdx === -1 || durationIdx === -1) {
+    throw new Error(`Required columns "${emailColumn}" or "${durationColumn}" not found.`);
+  }
+
+  const lastCol = headers.length;
+
+  // Add new columns ("Training Duration", "Percentage")
+  sheet.getCell(0, lastCol).setValue("Training Duration");
+  sheet.getCell(0, lastCol + 1).setValue("Percentage");
+
+  const totalCols = lastCol + 2;
+  const totalRows = usedRange.getRowCount();
+  const fullRange = sheet.getRangeByIndexes(0, 0, totalRows, totalCols);
+  const table = sheet.addTable(fullRange.getAddress(), true);
+  table.setName("AttendanceReport");
+
+  // Set "Training Duration" to 90 mins
+  const numRows = table.getRowCount();
+  table.getColumnByName("Training Duration").getRangeBetweenHeaderAndTotal()
+    .setValues(Array(numRows).fill([90]));
+
+  // Clean "Attendance Duration" column (remove " mins")
+  const durationRange = table.getColumnByName(durationColumn).getRangeBetweenHeaderAndTotal();
+  durationRange.replaceAll(" mins", "", { completeMatch: false, matchCase: false });
+
+  // Consolidate by email
+  const data = table.getRangeBetweenHeaderAndTotal().getValues();
+  const grouped = new Map<string, { row: (string | number | boolean)[], total: number }>();
+
+  data.forEach(row => {
+    const email = row[emailIdx] as string;
+    const duration = parseFloat(row[durationIdx] as string) || 0;
+    if (grouped.has(email)) {
+      grouped.get(email)!.total += duration;
+    } else {
+      grouped.set(email, { row: row.slice(), total: duration });
+    }
+  });
+
+  // Clear original rows
+  table.getRangeBetweenHeaderAndTotal().delete(ExcelScript.DeleteShiftDirection.up);
+
+  // Add grouped data back
+  const consolidatedRows: (string | number | boolean)[][] = [];
+  grouped.forEach(({ row, total }) => {
+    row[durationIdx] = total;
+    consolidatedRows.push(row);
+  });
+  table.addRows(-1, consolidatedRows);
+
+  // Set formula in "Percentage" column
+  const percentageCol = table.getColumnByName("Percentage");
+  percentageCol.getRangeBetweenHeaderAndTotal()
+    .setFormulasLocal(Array(consolidatedRows.length)
+      .fill([`=[@[${durationColumn}]]/[@[Training Duration]]`]));
+  percentageCol.getRangeBetweenHeaderAndTotal().setNumberFormat("0%");
+
+  // Sort by Attendance Duration ascending
+  table.getSort().apply([{ key: durationIdx, ascending: true }]);
+
+  // CONDITIONAL FORMATTING on entire row based on Percentage
+  const bodyRange = table.getRangeBetweenHeaderAndTotal();
+  const percentColLetter = String.fromCharCode(65 + percentageCol.getIndex());
+  const startRow = bodyRange.getRowIndex() + 1;
+
+  // RED for < 80%
+  const redCF = bodyRange.addConditionalFormat(ExcelScript.ConditionalFormatType.custom).getCustom();
+  redCF.getFormat().getFill().setColor("#FFC7CE");
+  redCF.getRule().setFormula(`=$${percentColLetter}${startRow}<0.8`);
+
+  // GREEN for >= 80%
+  const greenCF = bodyRange.addConditionalFormat(ExcelScript.ConditionalFormatType.custom).getCustom();
+  greenCF.getFormat().getFill().setColor("#C6EFCE");
+  greenCF.getRule().setFormula(`=$${percentColLetter}${startRow}>=0.8`);
+}
