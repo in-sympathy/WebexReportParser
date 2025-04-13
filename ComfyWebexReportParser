@@ -111,13 +111,31 @@ function main(workbook: ExcelScript.Workbook) {
     percentageCol.getRangeBetweenHeaderAndTotal().setNumberFormat("0%");
   }
 
+  // Remove specified columns dynamically by title
+  const columnsToRemove = ["First Name", "Last Name", "Role", "Attendee Email", "Connection Type"];
+  columnsToRemove.forEach(columnName => {
+    const colIdx = headers.indexOf(columnName);
+    if (colIdx !== -1) {
+      table.getColumnByName(columnName).delete();
+    }
+  });
+
+  // Set time format for columns B, C, E, and F
+  const timeFormat = "hh:mm:ss";
+  sheet.getRange("B:B").setNumberFormat(timeFormat);
+  sheet.getRange("C:C").setNumberFormat(timeFormat);
+  sheet.getRange("E:E").setNumberFormat(timeFormat);
+  sheet.getRange("F:F").setNumberFormat(timeFormat);
+
+  // Set value for column I within the table
+  table.getColumnByName("Training Duration").getRangeBetweenHeaderAndTotal()
+    .setValues(Array(table.getRowCount()).fill([90]));
+
+  // Format column J as percentage
+  table.getColumnByName("Percentage").getRangeBetweenHeaderAndTotal().setNumberFormat("0%");
+
   // Auto-fit all columns based on the used range.
   sheet.getUsedRange().getFormat().autofitColumns();
-
-  // Set time format for columns I and J
-  const timeFormat = "hh:mm:ss";
-  sheet.getRange("I:I").setNumberFormat(timeFormat);
-  sheet.getRange("J:J").setNumberFormat(timeFormat);
 
   // Select the entire dataset (excluding the header row) for easy manual copying.
   const finalRange = table.getRangeBetweenHeaderAndTotal();
