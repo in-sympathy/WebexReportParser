@@ -38,7 +38,7 @@ function main(workbook: ExcelScript.Workbook): void {
   headerRange.setValues([headers]);
 
   // Get the existing data rows (excluding the header) and add two extra columns.
-  let dataRows: CellValue[][] = originalValues.slice(1) as CellValue[][];
+  let dataRows: CellValue[][] = originalValues.slice(1);
   for (let i = 0; i < dataRows.length; i++) {
     // Ensure every data row has the original number of columns.
     while (dataRows[i].length < originalColCount) {
@@ -125,33 +125,38 @@ function main(workbook: ExcelScript.Workbook): void {
     cell.setNumberFormat("0%");
   }
 
-  // Filter: Keep only rows where any cell contains one of the keywords.
-  const keywords: string[] = ["comfy", "comfi", "комфі"];
-  const filteredRows: CellValue[][] = consolidatedRows.filter((row: CellValue[]) =>
-    row.some((cell: CellValue) =>
-      typeof cell === "string" && keywords.some((keyword: string) => cell.toLowerCase().includes(keyword))
-    )
-  );
+  // Filter: Only keep rows where the "Display Name" column contains one of the keywords.
+  const displayNameColumn: string = "Display Name";
+  const displayNameIdx: number = headers.indexOf(displayNameColumn);
+  // If the "Display Name" column exists, filter based on it.
+  if (displayNameIdx !== -1) {
+    const keywords: string[] = ["comfy", "comfi", "комфі"];
+    const filteredRows: CellValue[][] = consolidatedRows.filter((row: CellValue[]) => {
+      const displayName: string = (row[displayNameIdx] || "").toString();
+      return keywords.some((keyword: string) =>
+        displayName.toLowerCase().includes(keyword)
+      );
+    });
 
-  // If filtered rows exist, clear the current data and write the filtered rows,
-  // then reapply the Percentage formulas.
-  if (filteredRows.length > 0) {
-    const currentDataRange: ExcelScript.Range = sheet.getRangeByIndexes(1, 0, consolidatedRows.length, totalCols);
-    currentDataRange.clear(ExcelScript.ClearApplyTo.contents);
-    const filteredRange: ExcelScript.Range = sheet.getRangeByIndexes(1, 0, filteredRows.length, totalCols);
-    filteredRange.setValues(filteredRows);
-    for (let i = 0; i < filteredRows.length; i++) {
-      const excelRow: number = i + 2;
-      const formula: string = `=${attendanceColLetter}${excelRow}/${trainingColLetter}${excelRow}`;
-      const cell: ExcelScript.Range = sheet.getCell(excelRow - 1, percentageColIndex);
-      cell.setFormula(formula);
-      cell.setNumberFormat("0%");
+    // If filtered rows exist, overwrite the data and reapply the Percentage formulas.
+    if (filteredRows.length > 0) {
+      const currentDataRange: ExcelScript.Range = sheet.getRangeByIndexes(1, 0, consolidatedRows.length, totalCols);
+      currentDataRange.clear(ExcelScript.ClearApplyTo.contents);
+      const filteredRange: ExcelScript.Range = sheet.getRangeByIndexes(1, 0, filteredRows.length, totalCols);
+      filteredRange.setValues(filteredRows);
+      for (let i = 0; i < filteredRows.length; i++) {
+        const excelRow: number = i + 2;
+        const formula: string = `=${attendanceColLetter}${excelRow}/${trainingColLetter}${excelRow}`;
+        const cell: ExcelScript.Range = sheet.getCell(excelRow - 1, percentageColIndex);
+        cell.setFormula(formula);
+        cell.setNumberFormat("0%");
+      }
     }
   }
 
   // Remove unwanted columns by title.
   const columnsToRemove: string[] = ["First Name", "Last Name", "Role", "Attendee Email", "Connection Type"];
-  // Instead of using getRange("1:1"), retrieve the header row via getRangeByIndexes.
+  // Retrieve the header row using getRangeByIndexes.
   const headerVals: CellValue[][] = sheet.getRangeByIndexes(0, 0, 1, sheet.getUsedRange().getColumnCount()).getValues();
   if (headerVals.length === 0) {
     throw new Error("Header row is empty.");
