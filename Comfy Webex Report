@@ -1,0 +1,120 @@
+function main(workbook: ExcelScript.Workbook) {
+  const sheet = workbook.getActiveWorksheet();
+
+  // 1. Freeze the header row.
+  sheet.getFreezePanes().freezeRows(1);
+
+  // 2. Get the used range and header values.
+  const usedRange = sheet.getUsedRange();
+  const headers = usedRange.getRow(0).getValues()[0] as string[];
+
+  // Define key columns.
+  const emailColumn = "Attendee Email";
+  const durationColumn = "Attendance Duration";
+  // For filtering, we use column D (0-indexed = 3)
+  const filterColumnIndex = 3;
+
+  const emailIdx = headers.indexOf(emailColumn);
+  const durationIdx = headers.indexOf(durationColumn);
+  if (emailIdx === -1 || durationIdx === -1) {
+    throw new Error(`Required columns "${emailColumn}" or "${durationColumn}" not found.`);
+  }
+
+  const lastCol = headers.length;
+
+  // 3. Add new columns: "Training Duration" and "Percentage".
+  sheet.getCell(0, lastCol).setValue("Training Duration");
+  sheet.getCell(0, lastCol + 1).setValue("Percentage");
+
+  // 4. Extend the full range (with new columns) and convert it into a table.
+  const totalCols = lastCol + 2;
+  const totalRows = usedRange.getRowCount();
+  const fullRange = sheet.getRangeByIndexes(0, 0, totalRows, totalCols);
+  const table = sheet.addTable(fullRange.getAddress(), true);
+  table.setName("AttendanceReport");
+
+  // 5. Fill "Training Duration" column with 90.
+  const numRows = table.getRowCount();
+  table.getColumnByName("Training Duration")
+    .getRangeBetweenHeaderAndTotal()
+    .setValues(Array(numRows).fill([90]));
+
+  // 6. Clean "Attendance Duration": remove " mins".
+  table.getColumnByName(durationColumn)
+    .getRangeBetweenHeaderAndTotal()
+    .replaceAll(" mins", "", { completeMatch: false, matchCase: false });
+
+  // 7. Consolidate duplicate rows by "Attendee Email" (summing durations).
+  const data = table.getRangeBetweenHeaderAndTotal().getValues();
+  const grouped = new Map<string, { row: (string | number | boolean)[], total: number }>();
+  data.forEach(row => {
+    const email = row[emailIdx] as string;
+    const duration = parseFloat(row[durationIdx] as string) || 0;
+    if (grouped.has(email)) {
+      grouped.get(email)!.total += duration;
+    } else {
+      grouped.set(email, { row: row.slice(), total: duration });
+    }
+  });
+
+  // 8. Clear the original table body and add the consolidated rows.
+  table.getRangeBetweenHeaderAndTotal().delete(ExcelScript.DeleteShiftDirection.up);
+  const consolidatedRows: (string | number | boolean)[][] = [];
+  grouped.forEach(({ row, total }) => {
+    row[durationIdx] = total; // update the duration cell with summed total
+    consolidatedRows.push(row);
+  });
+  table.addRows(-1, consolidatedRows);
+
+  // 9. Set a live, dynamic formula in the "Percentage" column.
+  // Each cell will get: =[@[Attendance Duration]]/[@[Training Duration]]
+  const percentageCol = table.getColumnByName("Percentage");
+  percentageCol.getRangeBetweenHeaderAndTotal()
+    .setFormula("=[@[Attendance Duration]]/[@[Training Duration]]");
+  percentageCol.getRangeBetweenHeaderAndTotal().setNumberFormat("0%");
+
+  // 10. Sort the table by "Attendance Duration" (ascending).
+  table.getSort().apply([{ key: durationIdx, ascending: true }]);
+
+  // 11. Apply conditional formatting to the table body based on the "Percentage" column.
+  const bodyRange = table.getRangeBetweenHeaderAndTotal();
+  // Determine the letter for the "Percentage" column.
+  const percentColLetter = String.fromCharCode(65 + percentageCol.getIndex());
+  const firstDataRow = bodyRange.getRowIndex() + 1; // worksheet row number of first data row
+  const redCF = bodyRange.addConditionalFormat(ExcelScript.ConditionalFormatType.custom).getCustom();
+  redCF.getFormat().getFill().setColor("#FFC7CE");
+  redCF.getRule().setFormula(`=$${percentColLetter}${firstDataRow}<0.8`);
+  const greenCF = bodyRange.addConditionalFormat(ExcelScript.ConditionalFormatType.custom).getCustom();
+  greenCF.getFormat().getFill().setColor("#C6EFCE");
+  greenCF.getRule().setFormula(`=$${percentColLetter}${firstDataRow}>=0.8`);
+
+  // 12. Remove rows that do NOT contain our keywords in column D.
+  // We'll check column D (0-indexed 3) for at least one of: "Comfy", "comfy", "comfi", "комфі" (case-insensitive).
+  const keywords = ["comfy", "comfi", "комфі"];
+  const tableData = table.getRangeBetweenHeaderAndTotal().getValues();
+  const filteredRows = tableData.filter(row => {
+    const cell = row[filterColumnIndex];
+    if (typeof cell === "string") {
+      const lower = cell.toLowerCase();
+      return keywords.some(keyword => lower.includes(keyword));
+    }
+    return false;
+  });
+  // Delete current table body and re-add only the filtered rows.
+  table.getRangeBetweenHeaderAndTotal().delete(ExcelScript.DeleteShiftDirection.up);
+  if (filteredRows.length > 0) {
+    table.addRows(-1, filteredRows);
+  }
+
+  // 13. Reapply the live formula to the "Percentage" column for the new set of rows.
+  percentageCol.getRangeBetweenHeaderAndTotal()
+    .setFormula("=[@[Attendance Duration]]/[@[Training Duration]]");
+  percentageCol.getRangeBetweenHeaderAndTotal().setNumberFormat("0%");
+
+  // 14. Auto-fit all columns.
+  table.getRange().getFormat().autofitColumns();
+
+  // 15. Select the final dataset (excluding the header row) for manual copying.
+  const finalDataRange = table.getRangeBetweenHeaderAndTotal();
+  finalDataRange.select();
+}
