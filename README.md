@@ -1,4 +1,4 @@
-# Attendance Report Processor
+# Webex Attendance Report Parser
 
 This repository includes two Office Script variants for processing attendance data in Excel. Both scripts consolidate data by "Attendee Email", calculate a "Percentage" of training attended (with a default training duration of 90 minutes), remove unwanted columns, and format the output.
 
