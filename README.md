@@ -1,22 +1,22 @@
-Webex Attendance Processing Office Script
+# Attendance Report Processor
 
-This Office Script automates Webex attendance reports by:
+This repository includes two Office Script variants for processing attendance data in Excel. Both scripts consolidate data by "Attendee Email", calculate a "Percentage" of training attended (with a default training duration of 90 minutes), remove unwanted columns, and format the output.
 
-Adding “Training Duration” (default 90) and “Percentage” columns.
-Converting the data into a table.
-Cleaning and consolidating rows by summing durations (based on “Attendee Email”).
-Inserting a live formula in “Percentage” so it updates dynamically.
-Sorting by “Attendance Duration”, applying conditional formatting (red for <80%, green for ≥80%), and filtering rows by keywords in column D.
-Auto-fitting columns and selecting the final dataset for easy copy.
-Usage
+## Variants
 
-Open your CSV in Excel for the web.
-Enable Office Scripts and create a new script.
-Copy-paste this script and run it.
-Adjust defaults (e.g., Training Duration and keywords) as needed.
-Requirements
+- **With Filtering:**  
+  Filters rows based on keywords (e.g., "comfy", "комфі") found in the "Display Name" column.
 
-Excel for the web with Office Scripts enabled.
-License
+- **Without Filtering:**  
+  Performs all data consolidation and formatting without any filtering by keywords.
 
-MIT License
+## Usage
+
+1. **Open Excel on the Web:** Go to the **Automate** tab and create a new script.
+2. **Copy & Paste:** Choose the desired variant (`AttendanceReportWithFiltering.ts` or `AttendanceReportWithoutFiltering.ts`) from this repository and paste it into the script editor.
+3. **Run the Script:** Ensure your worksheet includes at least the columns "Attendee Email" and "Attendance Duration" (and "Display Name" for the filtering variant), then run the script.
+
+## Customization
+
+- **Training Duration:** Default is 90 minutes – change as needed.
+- **Columns to Remove:** Modify the `columnsToRemove` array in the script.
