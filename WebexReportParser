@@ -1,91 +1,170 @@
-function main(workbook: ExcelScript.Workbook) {
-  const sheet = workbook.getActiveWorksheet();
+// Define a type alias for acceptable cell values.
+type CellValue = string | number | boolean;
 
-  // Freeze header row
+function main(workbook: ExcelScript.Workbook): void {
+  // Get the active worksheet.
+  const sheet: ExcelScript.Worksheet = workbook.getActiveWorksheet();
+
+  // Freeze header row.
   sheet.getFreezePanes().freezeRows(1);
 
-  // Get used range and headers
-  const usedRange = sheet.getUsedRange();
-  const headers = usedRange.getRow(0).getValues()[0] as string[];
+  // Get the used range and its values.
+  const usedRange: ExcelScript.Range = sheet.getUsedRange();
+  const originalValues: CellValue[][] = usedRange.getValues() as CellValue[][];
+  if (originalValues.length === 0) {
+    throw new Error("No data found.");
+  }
 
-  const emailColumn = "Attendee Email";
-  const durationColumn = "Attendance Duration";
+  // The first row is assumed to be the header row.
+  let headers: string[] = originalValues[0] as string[];
+  const originalRowCount: number = originalValues.length;
+  const originalColCount: number = headers.length;
 
-  const emailIdx = headers.indexOf(emailColumn);
-  const durationIdx = headers.indexOf(durationColumn);
-
+  // Validate that required columns exist.
+  const emailColumn: string = "Attendee Email";
+  const durationColumn: string = "Attendance Duration";
+  const emailIdx: number = headers.indexOf(emailColumn);
+  const durationIdx: number = headers.indexOf(durationColumn);
   if (emailIdx === -1 || durationIdx === -1) {
     throw new Error(`Required columns "${emailColumn}" or "${durationColumn}" not found.`);
   }
 
-  const lastCol = headers.length;
+  // Append new header columns: "Training Duration" and "Percentage".
+  headers.push("Training Duration", "Percentage");
+  const totalCols: number = headers.length;
+  
+  // Write the updated header row back to the sheet.
+  const headerRange: ExcelScript.Range = sheet.getRangeByIndexes(0, 0, 1, totalCols);
+  headerRange.setValues([headers]);
 
-  // Add new columns ("Training Duration", "Percentage")
-  sheet.getCell(0, lastCol).setValue("Training Duration");
-  sheet.getCell(0, lastCol + 1).setValue("Percentage");
+  // Get the existing data rows (excluding the header) and add two extra columns.
+  let dataRows: CellValue[][] = originalValues.slice(1);
+  for (let i = 0; i < dataRows.length; i++) {
+    // Ensure every data row has the original number of columns.
+    while (dataRows[i].length < originalColCount) {
+      dataRows[i].push("");
+    }
+    // Append placeholders for "Training Duration" and "Percentage".
+    dataRows[i].push("");
+    dataRows[i].push("");
+  }
 
-  const totalCols = lastCol + 2;
-  const totalRows = usedRange.getRowCount();
-  const fullRange = sheet.getRangeByIndexes(0, 0, totalRows, totalCols);
-  const table = sheet.addTable(fullRange.getAddress(), true);
-  table.setName("AttendanceReport");
+  // Clean the "Attendance Duration" column by removing " mins" and converting to a number.
+  for (let i = 0; i < dataRows.length; i++) {
+    const cellVal: CellValue = dataRows[i][durationIdx];
+    let durationNum: number = 0;
+    if (typeof cellVal === "string") {
+      const cleaned: string = cellVal.replace(/ mins/gi, "").trim();
+      durationNum = parseFloat(cleaned);
+    } else if (typeof cellVal === "number") {
+      durationNum = cellVal;
+    }
+    // Overwrite with the numeric value.
+    dataRows[i][durationIdx] = durationNum;
+    // Set "Training Duration" (the extra column at index originalColCount) to 90.
+    dataRows[i][originalColCount] = 90;
+  }
 
-  // Set "Training Duration" to 90 mins
-  const numRows = table.getRowCount();
-  table.getColumnByName("Training Duration").getRangeBetweenHeaderAndTotal()
-    .setValues(Array(numRows).fill([90]));
-
-  // Clean "Attendance Duration" column (remove " mins")
-  const durationRange = table.getColumnByName(durationColumn).getRangeBetweenHeaderAndTotal();
-  durationRange.replaceAll(" mins", "", { completeMatch: false, matchCase: false });
-
-  // Consolidate by email
-  const data = table.getRangeBetweenHeaderAndTotal().getValues();
-  const grouped = new Map<string, { row: (string | number | boolean)[], total: number }>();
-
-  data.forEach(row => {
-    const email = row[emailIdx] as string;
-    const duration = parseFloat(row[durationIdx] as string) || 0;
+  // Consolidate rows by email; sum the "Attendance Duration" for duplicate emails.
+  const grouped: Map<string, CellValue[]> = new Map();
+  for (let i = 0; i < dataRows.length; i++) {
+    const row: CellValue[] = dataRows[i];
+    const email: string = row[emailIdx] as string;
+    const durationValue: number = row[durationIdx] as number;
     if (grouped.has(email)) {
-      grouped.get(email)!.total += duration;
+      const existingRow: CellValue[] = grouped.get(email)!;
+      existingRow[durationIdx] = (existingRow[durationIdx] as number) + durationValue;
     } else {
-      grouped.set(email, { row: row.slice(), total: duration });
+      grouped.set(email, row.slice());
+    }
+  }
+  const consolidatedRows: CellValue[][] = Array.from(grouped.values());
+  
+  // Sort the consolidated rows by "Attendance Duration" (ascending).
+  consolidatedRows.sort((a, b) => (a[durationIdx] as number) - (b[durationIdx] as number));
+
+  // Clear the original data rows (below the header).
+  const currentUsedRows: number = sheet.getUsedRange().getRowCount();
+  if (currentUsedRows > 1) {
+    const clearRange: ExcelScript.Range = sheet.getRangeByIndexes(
+      1,
+      0,
+      currentUsedRows - 1,
+      sheet.getUsedRange().getColumnCount()
+    );
+    clearRange.clear(ExcelScript.ClearApplyTo.contents);
+  }
+  // Write the consolidated rows back into the sheet (starting at row 2).
+  if (consolidatedRows.length > 0) {
+    const outputRange: ExcelScript.Range = sheet.getRangeByIndexes(1, 0, consolidatedRows.length, totalCols);
+    outputRange.setValues(consolidatedRows);
+  }
+
+  // Helper function to convert a zero-based column index to its corresponding letter.
+  function colLetter(n: number): string {
+    let letter: string = "";
+    while (n >= 0) {
+      letter = String.fromCharCode((n % 26) + 65) + letter;
+      n = Math.floor(n / 26) - 1;
+    }
+    return letter;
+  }
+  
+  // Determine column letters.
+  const attendanceColLetter: string = colLetter(durationIdx);
+  const trainingColLetter: string = colLetter(originalColCount);
+  const percentageColIndex: number = totalCols - 1;
+  const percentageColLetter: string = colLetter(percentageColIndex);
+  
+  // Set the "Percentage" formula for each consolidated row.
+  for (let i = 0; i < consolidatedRows.length; i++) {
+    const excelRow: number = i + 2; // Excel rows are 1-indexed; header is row 1.
+    const formula: string = `=${attendanceColLetter}${excelRow}/${trainingColLetter}${excelRow}`;
+    const cell: ExcelScript.Range = sheet.getCell(excelRow - 1, percentageColIndex);
+    cell.setFormula(formula);
+    cell.setNumberFormat("0%");
+  }
+  
+  // (Note: Filtering step has been removed in this version.)
+
+  // Remove unwanted columns by title.
+  const columnsToRemove: string[] = ["First Name", "Last Name", "Role", "Attendee Email", "Connection Type"];
+  // Retrieve the header row using getRangeByIndexes.
+  const headerVals: CellValue[][] = sheet.getRangeByIndexes(0, 0, 1, sheet.getUsedRange().getColumnCount()).getValues();
+  if (headerVals.length === 0) {
+    throw new Error("Header row is empty.");
+  }
+  const latestHeader: string[] = headerVals[0] as string[];
+
+  let indicesToRemove: number[] = [];
+  columnsToRemove.forEach((colName: string) => {
+    const idx: number = latestHeader.indexOf(colName);
+    if (idx !== -1) {
+      indicesToRemove.push(idx);
     }
   });
-
-  // Clear original rows
-  table.getRangeBetweenHeaderAndTotal().delete(ExcelScript.DeleteShiftDirection.up);
-
-  // Add grouped data back
-  const consolidatedRows: (string | number | boolean)[][] = [];
-  grouped.forEach(({ row, total }) => {
-    row[durationIdx] = total;
-    consolidatedRows.push(row);
+  // Delete columns in descending order (to avoid index shifting).
+  indicesToRemove.sort((a, b) => b - a);
+  indicesToRemove.forEach((idx: number) => {
+    const colToDelete: string = colLetter(idx);
+    sheet.getRange(`${colToDelete}:${colToDelete}`).delete(ExcelScript.DeleteShiftDirection.left);
   });
-  table.addRows(-1, consolidatedRows);
-
-  // Set formula in "Percentage" column
-  const percentageCol = table.getColumnByName("Percentage");
-  percentageCol.getRangeBetweenHeaderAndTotal()
-    .setFormulasLocal(Array(consolidatedRows.length)
-      .fill([`=[@[${durationColumn}]]/[@[Training Duration]]`]));
-  percentageCol.getRangeBetweenHeaderAndTotal().setNumberFormat("0%");
-
-  // Sort by Attendance Duration ascending
-  table.getSort().apply([{ key: durationIdx, ascending: true }]);
-
-  // CONDITIONAL FORMATTING on entire row based on Percentage
-  const bodyRange = table.getRangeBetweenHeaderAndTotal();
-  const percentColLetter = String.fromCharCode(65 + percentageCol.getIndex());
-  const startRow = bodyRange.getRowIndex() + 1;
-
-  // RED for < 80%
-  const redCF = bodyRange.addConditionalFormat(ExcelScript.ConditionalFormatType.custom).getCustom();
-  redCF.getFormat().getFill().setColor("#FFC7CE");
-  redCF.getRule().setFormula(`=$${percentColLetter}${startRow}<0.8`);
-
-  // GREEN for >= 80%
-  const greenCF = bodyRange.addConditionalFormat(ExcelScript.ConditionalFormatType.custom).getCustom();
-  greenCF.getFormat().getFill().setColor("#C6EFCE");
-  greenCF.getRule().setFormula(`=$${percentColLetter}${startRow}>=0.8`);
+  
+  // Set time formats for columns B, C, E, and F.
+  sheet.getRange("B:B").setNumberFormat("hh:mm:ss");
+  sheet.getRange("C:C").setNumberFormat("hh:mm:ss");
+  sheet.getRange("E:E").setNumberFormat("hh:mm:ss");
+  sheet.getRange("F:F").setNumberFormat("hh:mm:ss");
+  
+  // Auto-fit all columns.
+  sheet.getUsedRange().getFormat().autofitColumns();
+  
+  // Select the final data range (excluding the header row).
+  const finalUsed: ExcelScript.Range = sheet.getUsedRange();
+  const finalRowCount: number = finalUsed.getRowCount();
+  const finalColCount: number = finalUsed.getColumnCount();
+  if (finalRowCount > 1) {
+    const finalDataRange: ExcelScript.Range = sheet.getRangeByIndexes(1, 0, finalRowCount - 1, finalColCount);
+    finalDataRange.select();
+  }
 }
